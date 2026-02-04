@@ -28,7 +28,7 @@ A Terraform provider for managing OPNsense 26.1 firewall configuration via the A
 Clone the repository and build:
 
 ```bash
-git clone https://github.com/yourusername/terraform-provider-opnsense
+git clone https://github.com/rgcosta7/terraform-provider-opnsense-26
 cd terraform-provider-opnsense
 go build -o terraform-provider-opnsense
 ```
@@ -41,10 +41,10 @@ For local development, you can use the provider by placing it in the appropriate
 
 ```bash
 # Create the plugins directory
-mkdir -p ~/.terraform.d/plugins/registry.terraform.io/yourusername/opnsense/0.1.0/linux_amd64/
+mkdir -p ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense/0.1.0/linux_amd64/
 
 # Copy the built binary
-cp terraform-provider-opnsense ~/.terraform.d/plugins/registry.terraform.io/yourusername/opnsense/0.1.0/linux_amd64/
+cp terraform-provider-opnsense ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense/0.1.0/linux_amd64/
 ```
 
 Update your Terraform configuration to use the local provider:
@@ -53,7 +53,7 @@ Update your Terraform configuration to use the local provider:
 terraform {
   required_providers {
     opnsense = {
-      source  = "yourusername/opnsense"
+      source  = "rgcosta7/opnsense"
       version = "0.1.0"
     }
   }
