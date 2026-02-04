@@ -232,6 +232,7 @@ func (p *opnsenseProvider) Resources(_ context.Context) []func() resource.Resour
 	return []func() resource.Resource{
 		NewFirewallRuleResource,
 		NewFirewallAliasResource,
+		NewFirewallCategoryResource,
 		NewKeaReservationResource,
 		NewKeaSubnetResource,
 		NewWireguardServerResource,
