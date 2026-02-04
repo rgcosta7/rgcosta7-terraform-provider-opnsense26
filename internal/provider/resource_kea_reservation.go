@@ -117,7 +117,7 @@ func (r *KeaReservationResource) Create(ctx context.Context, req resource.Create
 
 	jsonData, _ := json.Marshal(reservationData)
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/addReservation", r.client.Host)
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_reservation", r.client.Host)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -160,7 +160,7 @@ func (r *KeaReservationResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/getReservation/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/get_reservation/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 
@@ -203,7 +203,7 @@ func (r *KeaReservationResource) Update(ctx context.Context, req resource.Update
 
 	jsonData, _ := json.Marshal(reservationData)
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/setReservation/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/set_reservation/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -231,7 +231,7 @@ func (r *KeaReservationResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/delReservation/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/del_reservation/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 

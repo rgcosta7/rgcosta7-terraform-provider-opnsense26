@@ -67,7 +67,7 @@ go list -m github.com/hashicorp/terraform-plugin-go
 echo ""
 
 echo "Step 6/6: Building..."
-go build -v -o terraform-provider-opnsense 2>&1 | head -20
+go build -v -o terraform-provider-opnsense
 BUILD_EXIT=$?
 
 echo ""

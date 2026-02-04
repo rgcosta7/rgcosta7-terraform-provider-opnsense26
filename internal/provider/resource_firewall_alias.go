@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 var _ resource.Resource = &FirewallAliasResource{}
@@ -102,10 +103,10 @@ func (r *FirewallAliasResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
-	// Convert content list to comma-separated string
+	// Convert content list to newline-separated string (not comma-separated!)
 	var contentItems []string
 	resp.Diagnostics.Append(data.Content.ElementsAs(ctx, &contentItems, false)...)
-	contentStr := strings.Join(contentItems, ",")
+	contentStr := strings.Join(contentItems, "\n")  // Changed from "," to "\n"
 
 	aliasData := map[string]interface{}{
 		"alias": map[string]interface{}{
@@ -144,18 +145,60 @@ func (r *FirewallAliasResource) Create(ctx context.Context, req resource.CreateR
 
 	body, _ := io.ReadAll(httpResp.Body)
 
+	// Debug: Log raw response
+	tflog.Debug(ctx, "Raw API Response", map[string]any{
+		"status_code": httpResp.StatusCode,
+		"body":        string(body),
+	})
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s. Body: %s", err, string(body)))
 		return
 	}
 
-	if uuid, ok := result["uuid"].(string); ok {
-		data.ID = types.StringValue(uuid)
-	} else {
-		resp.Diagnostics.AddError("API Error", "No UUID returned from API")
+	// Try multiple possible response formats
+	var uuid string
+	
+	// Format 1: {"uuid": "..."}
+	if val, ok := result["uuid"].(string); ok && val != "" {
+		uuid = val
+	}
+	
+	// Format 2: {"result": "saved", "uuid": "..."}
+	if uuid == "" {
+		if val, ok := result["uuid"].(string); ok && val != "" {
+			uuid = val
+		}
+	}
+	
+	// Format 3: Check if there's a nested structure
+	if uuid == "" {
+		if alias, ok := result["alias"].(map[string]interface{}); ok {
+			if val, ok := alias["uuid"].(string); ok && val != "" {
+				uuid = val
+			}
+		}
+	}
+
+	// Format 4: Maybe it returns the data back with UUID embedded
+	if uuid == "" {
+		// Log what we got to help debug
+		tflog.Warn(ctx, "UUID not found in expected locations", map[string]any{
+			"response_keys": fmt.Sprintf("%v", getKeys(result)),
+			"full_response": string(body),
+		})
+	}
+
+	if uuid == "" {
+		resp.Diagnostics.AddError(
+			"API Error", 
+			fmt.Sprintf("No UUID returned from API. Response: %s", string(body)),
+		)
 		return
 	}
+
+	data.ID = types.StringValue(uuid)
 
 	// Apply configuration
 	applyURL := fmt.Sprintf("%s/api/firewall/alias/reconfigure", r.client.Host)
@@ -201,7 +244,7 @@ func (r *FirewallAliasResource) Update(ctx context.Context, req resource.UpdateR
 
 	var contentItems []string
 	resp.Diagnostics.Append(data.Content.ElementsAs(ctx, &contentItems, false)...)
-	contentStr := strings.Join(contentItems, ",")
+	contentStr := strings.Join(contentItems, "\n")  // Changed from "," to "\n"
 
 	aliasData := map[string]interface{}{
 		"alias": map[string]interface{}{
@@ -272,4 +315,13 @@ func (r *FirewallAliasResource) Delete(ctx context.Context, req resource.DeleteR
 
 func (r *FirewallAliasResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// Helper function to get keys from map for debugging
+func getKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

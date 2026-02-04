@@ -113,7 +113,7 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 
 	jsonData, _ := json.Marshal(subnetData)
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/addSubnet", r.client.Host)
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -156,7 +156,7 @@ func (r *KeaSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/getSubnet/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/get_subnet/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 
@@ -200,7 +200,7 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 
 	jsonData, _ := json.Marshal(subnetData)
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/setSubnet/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/set_subnet/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -228,7 +228,7 @@ func (r *KeaSubnetResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/kea/dhcpv4/delSubnet/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/kea/dhcpv4/del_subnet/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 

@@ -4,12 +4,12 @@ default: build
 build:
 	go mod download
 	go mod tidy
-	go build -o terraform-provider-opnsense26
+	go build -o terraform-provider-opnsense
 
 .PHONY: install
 install: build
-	mkdir -p ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense26/0.1.0/linux_amd64
-	cp terraform-provider-opnsense26 ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense26/0.1.0/linux_amd64/
+	mkdir -p ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense/0.1.0/linux_amd64
+	cp terraform-provider-opnsense ~/.terraform.d/plugins/registry.terraform.io/rgcosta7/opnsense/0.1.0/linux_amd64/
 
 .PHONY: test
 test:
@@ -34,7 +34,7 @@ docs:
 
 .PHONY: clean
 clean:
-	rm -f terraform-provider-opnsense26
+	rm -f terraform-provider-opnsense
 	rm -rf dist/
 
 .PHONY: mod
