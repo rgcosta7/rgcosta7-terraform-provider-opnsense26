@@ -28,15 +28,18 @@ type WireguardServerResource struct {
 }
 
 type WireguardServerResourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Enabled     types.Bool   `tfsdk:"enabled"`
-	PublicKey   types.String `tfsdk:"public_key"`
-	PrivateKey  types.String `tfsdk:"private_key"`
-	ListenPort  types.Int64  `tfsdk:"listen_port"`
-	TunnelAddr  types.String `tfsdk:"tunnel_address"`
-	Peers       types.List   `tfsdk:"peers"`
-	DisableRoutes types.Bool `tfsdk:"disable_routes"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	Enabled       types.Bool   `tfsdk:"enabled"`
+	PublicKey     types.String `tfsdk:"public_key"`
+	PrivateKey    types.String `tfsdk:"private_key"`
+	ListenPort    types.Int64  `tfsdk:"listen_port"`
+	TunnelAddr    types.String `tfsdk:"tunnel_address"`
+	Peers         types.List   `tfsdk:"peers"`
+	DisableRoutes types.Bool   `tfsdk:"disable_routes"`
+	DNS           types.String `tfsdk:"dns"`
+	MTU           types.Int64  `tfsdk:"mtu"`
+	Gateway       types.String `tfsdk:"gateway"`
 }
 
 func (r *WireguardServerResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -88,6 +91,18 @@ func (r *WireguardServerResource) Schema(ctx context.Context, req resource.Schem
 			},
 			"disable_routes": schema.BoolAttribute{
 				MarkdownDescription: "Disable automatic route creation",
+				Optional:            true,
+			},
+			"dns": schema.StringAttribute{
+				MarkdownDescription: "DNS servers for clients (comma-separated)",
+				Optional:            true,
+			},
+			"mtu": schema.Int64Attribute{
+				MarkdownDescription: "MTU for the tunnel interface",
+				Optional:            true,
+			},
+			"gateway": schema.StringAttribute{
+				MarkdownDescription: "Gateway IP address for the tunnel",
 				Optional:            true,
 			},
 		},
@@ -148,6 +163,18 @@ func (r *WireguardServerResource) Create(ctx context.Context, req resource.Creat
 		var peers []string
 		resp.Diagnostics.Append(data.Peers.ElementsAs(ctx, &peers, false)...)
 		serverData["server"].(map[string]interface{})["peers"] = strings.Join(peers, ",")
+	}
+
+	if !data.DNS.IsNull() {
+		serverData["server"].(map[string]interface{})["dns"] = data.DNS.ValueString()
+	}
+
+	if !data.MTU.IsNull() {
+		serverData["server"].(map[string]interface{})["mtu"] = fmt.Sprintf("%d", data.MTU.ValueInt64())
+	}
+
+	if !data.Gateway.IsNull() {
+		serverData["server"].(map[string]interface{})["gateway"] = data.Gateway.ValueString()
 	}
 
 	jsonData, _ := json.Marshal(serverData)
@@ -283,6 +310,18 @@ func (r *WireguardServerResource) Update(ctx context.Context, req resource.Updat
 		var peers []string
 		resp.Diagnostics.Append(data.Peers.ElementsAs(ctx, &peers, false)...)
 		serverData["server"].(map[string]interface{})["peers"] = strings.Join(peers, ",")
+	}
+
+	if !data.DNS.IsNull() {
+		serverData["server"].(map[string]interface{})["dns"] = data.DNS.ValueString()
+	}
+
+	if !data.MTU.IsNull() {
+		serverData["server"].(map[string]interface{})["mtu"] = fmt.Sprintf("%d", data.MTU.ValueInt64())
+	}
+
+	if !data.Gateway.IsNull() {
+		serverData["server"].(map[string]interface{})["gateway"] = data.Gateway.ValueString()
 	}
 
 	jsonData, _ := json.Marshal(serverData)
