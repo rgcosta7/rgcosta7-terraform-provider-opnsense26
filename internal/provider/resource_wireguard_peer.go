@@ -152,7 +152,7 @@ func (r *WireguardPeerResource) Create(ctx context.Context, req resource.CreateR
 
 	jsonData, _ := json.Marshal(peerData)
 
-	url := fmt.Sprintf("%s/api/wireguard/client/addClient", r.client.Host)
+	url := fmt.Sprintf("%s/api/wireguard/client/add_client", r.client.Host)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -195,7 +195,7 @@ func (r *WireguardPeerResource) Read(ctx context.Context, req resource.ReadReque
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/wireguard/client/getClient/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/wireguard/client/get_client/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 
@@ -255,7 +255,7 @@ func (r *WireguardPeerResource) Update(ctx context.Context, req resource.UpdateR
 
 	jsonData, _ := json.Marshal(peerData)
 
-	url := fmt.Sprintf("%s/api/wireguard/client/setClient/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/wireguard/client/set_client/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -283,7 +283,7 @@ func (r *WireguardPeerResource) Delete(ctx context.Context, req resource.DeleteR
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/wireguard/client/delClient/%s", r.client.Host, data.ID.ValueString())
+	url := fmt.Sprintf("%s/api/wireguard/client/del_client/%s", r.client.Host, data.ID.ValueString())
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
 
