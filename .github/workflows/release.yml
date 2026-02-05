@@ -114,7 +114,7 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           cd dist
-          sha256sum * > terraform-provider-opnsense_${{ needs.check-trigger.outputs.version }}_SHA256SUMS
+          sha256sum * > checksums.txt
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -140,8 +140,15 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -type f -exec cp {} release/ \;
-          ls -lah release/
+          
+          # Copy all binaries
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          
+          # Generate combined SHA256SUMS
+          cd release
+          sha256sum terraform-provider-opnsense_* > terraform-provider-opnsense_${{ needs.check-trigger.outputs.version }}_SHA256SUMS
+          
+          ls -lah
 
       - name: Import GPG key
         id: import_gpg
@@ -156,17 +163,30 @@ jobs:
           VERSION="${{ needs.check-trigger.outputs.version }}"
           SHASUMS_FILE="terraform-provider-opnsense_${VERSION}_SHA256SUMS"
           
+          # Verify checksums file exists
+          if [ ! -f "${SHASUMS_FILE}" ]; then
+            echo "Error: ${SHASUMS_FILE} not found"
+            ls -la
+            exit 1
+          fi
+          
+          echo "📝 Signing ${SHASUMS_FILE}..."
+          
           # Sign the checksums file
           gpg --detach-sign --armor "${SHASUMS_FILE}"
           
           # Verify signature was created
           if [ ! -f "${SHASUMS_FILE}.sig" ]; then
-            echo "Error: Signature file not created"
+            echo "❌ Error: Signature file not created"
+            gpg --list-keys
             exit 1
           fi
           
           echo "✅ Checksums signed successfully"
           ls -la "${SHASUMS_FILE}"*
+          
+          # Verify the signature
+          gpg --verify "${SHASUMS_FILE}.sig" "${SHASUMS_FILE}"
 
       - name: Generate release notes
         id: notes
