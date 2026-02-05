@@ -125,18 +125,46 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	defer httpResp.Body.Close()
 
-	body, _ := io.ReadAll(httpResp.Body)
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
 		return
 	}
 
-	if uuid, ok := result["uuid"].(string); ok {
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
+		return
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
+		return
+	}
+
+	// Log the full response for debugging
+	if resultJSON, err := json.MarshalIndent(result, "", "  "); err == nil {
+		resp.Diagnostics.AddWarning("API Response", fmt.Sprintf("Full response: %s", string(resultJSON)))
+	}
+
+	// Try to extract UUID from various possible response formats
+	var uuid string
+	if uuidVal, ok := result["uuid"].(string); ok {
+		uuid = uuidVal
+	} else if uuidVal, ok := result["id"].(string); ok {
+		uuid = uuidVal
+	} else if resultVal, ok := result["result"].(string); ok {
+		uuid = resultVal
+	} else if subnetData, ok := result["subnet"].(map[string]interface{}); ok {
+		if uuidVal, ok := subnetData["uuid"].(string); ok {
+			uuid = uuidVal
+		}
+	}
+
+	if uuid != "" {
 		data.ID = types.StringValue(uuid)
 	} else {
-		resp.Diagnostics.AddError("API Error", "No UUID returned from API")
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("No UUID found in API response. Response: %s", string(body)))
 		return
 	}
 
@@ -170,6 +198,39 @@ func (r *KeaSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if httpResp.StatusCode == 404 {
 		resp.State.RemoveResource(ctx)
 		return
+	}
+
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d", httpResp.StatusCode))
+		return
+	}
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
+		return
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+		return
+	}
+
+	// Parse the subnet data from the response
+	if subnetData, ok := result["subnet"].(map[string]interface{}); ok {
+		if subnet, ok := subnetData["subnet"].(string); ok {
+			data.Subnet = types.StringValue(subnet)
+		}
+		if pools, ok := subnetData["pools"].(string); ok {
+			data.Pools = types.StringValue(pools)
+		}
+		if optionData, ok := subnetData["option_data"].(string); ok {
+			data.Option = types.StringValue(optionData)
+		}
+		if description, ok := subnetData["description"].(string); ok {
+			data.Description = types.StringValue(description)
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -211,6 +272,17 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
+		return
+	}
+
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
+		return
+	}
 
 	// Apply configuration
 	applyURL := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)

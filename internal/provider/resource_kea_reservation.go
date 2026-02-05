@@ -129,18 +129,46 @@ func (r *KeaReservationResource) Create(ctx context.Context, req resource.Create
 	}
 	defer httpResp.Body.Close()
 
-	body, _ := io.ReadAll(httpResp.Body)
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
 		return
 	}
 
-	if uuid, ok := result["uuid"].(string); ok {
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
+		return
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
+		return
+	}
+
+	// Log the full response for debugging
+	if resultJSON, err := json.MarshalIndent(result, "", "  "); err == nil {
+		resp.Diagnostics.AddWarning("API Response", fmt.Sprintf("Full response: %s", string(resultJSON)))
+	}
+
+	// Try to extract UUID from various possible response formats
+	var uuid string
+	if uuidVal, ok := result["uuid"].(string); ok {
+		uuid = uuidVal
+	} else if uuidVal, ok := result["id"].(string); ok {
+		uuid = uuidVal
+	} else if resultVal, ok := result["result"].(string); ok {
+		uuid = resultVal
+	} else if reservationData, ok := result["reservation"].(map[string]interface{}); ok {
+		if uuidVal, ok := reservationData["uuid"].(string); ok {
+			uuid = uuidVal
+		}
+	}
+
+	if uuid != "" {
 		data.ID = types.StringValue(uuid)
 	} else {
-		resp.Diagnostics.AddError("API Error", "No UUID returned from API")
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("No UUID found in API response. Response: %s", string(body)))
 		return
 	}
 
@@ -174,6 +202,42 @@ func (r *KeaReservationResource) Read(ctx context.Context, req resource.ReadRequ
 	if httpResp.StatusCode == 404 {
 		resp.State.RemoveResource(ctx)
 		return
+	}
+
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d", httpResp.StatusCode))
+		return
+	}
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
+		return
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+		return
+	}
+
+	// Parse the reservation data from the response
+	if reservationData, ok := result["reservation"].(map[string]interface{}); ok {
+		if subnet, ok := reservationData["subnet"].(string); ok {
+			data.Subnet = types.StringValue(subnet)
+		}
+		if ipAddress, ok := reservationData["ip_address"].(string); ok {
+			data.IPAddress = types.StringValue(ipAddress)
+		}
+		if hwAddress, ok := reservationData["hw_address"].(string); ok {
+			data.HWAddress = types.StringValue(hwAddress)
+		}
+		if hostname, ok := reservationData["hostname"].(string); ok {
+			data.Hostname = types.StringValue(hostname)
+		}
+		if description, ok := reservationData["description"].(string); ok {
+			data.Description = types.StringValue(description)
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -214,6 +278,17 @@ func (r *KeaReservationResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
+		return
+	}
+
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
+		return
+	}
 
 	// Apply configuration
 	applyURL := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
