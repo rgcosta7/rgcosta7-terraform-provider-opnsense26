@@ -171,7 +171,20 @@ func (r *KeaReservationResource) Create(ctx context.Context, req resource.Create
 		}
 		
 		if len(resultArray) == 0 {
-			resp.Diagnostics.AddError("API Error", "API returned empty array - this usually means the request failed validation or the API endpoint doesn't exist")
+			resp.Diagnostics.AddError(
+				"Kea DHCP API Error",
+				"API returned empty array [].\n\n"+
+				"This typically means:\n"+
+				"1. The Kea DHCP plugin is not installed or enabled in OPNsense\n"+
+				"2. The subnet UUID referenced doesn't exist\n"+
+				"3. Request validation failed\n\n"+
+				"To fix:\n"+
+				"- In OPNsense GUI: System > Firmware > Plugins\n"+
+				"- Install 'os-kea-dhcp' plugin if not already installed\n"+
+				"- Ensure the referenced subnet exists first\n"+
+				"- Check Services > Kea DHCPv4 to ensure it's configured\n\n"+
+				"Request sent: "+string(jsonData),
+			)
 			return
 		}
 		
@@ -199,9 +212,33 @@ func (r *KeaReservationResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	// Check for validation errors in result
+	if resultStatus, ok := result["result"].(string); ok && resultStatus == "failed" {
+		var errorMsgs []string
+		if validations, ok := result["validations"].(map[string]interface{}); ok {
+			for field, errors := range validations {
+				if errList, ok := errors.([]interface{}); ok {
+					for _, err := range errList {
+						if errStr, ok := err.(string); ok {
+							errorMsgs = append(errorMsgs, fmt.Sprintf("%s: %s", field, errStr))
+						}
+					}
+				} else if errStr, ok := errors.(string); ok {
+					errorMsgs = append(errorMsgs, fmt.Sprintf("%s: %s", field, errStr))
+				}
+			}
+		}
+		if len(errorMsgs) > 0 {
+			resp.Diagnostics.AddError("API Validation Failed", fmt.Sprintf("Validation errors:\n- %s", strings.Join(errorMsgs, "\n- ")))
+		} else {
+			resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned failed status: %s", string(body)))
+		}
+		return
+	}
+
 	// Log the full response for debugging
 	if resultJSON, err := json.MarshalIndent(result, "", "  "); err == nil {
-		resp.Diagnostics.AddWarning("API Response", fmt.Sprintf("Full response: %s", string(resultJSON)))
+		tflog.Debug(ctx, "API Response", map[string]any{"response": string(resultJSON)})
 	}
 
 	// Try to extract UUID from various possible response formats
