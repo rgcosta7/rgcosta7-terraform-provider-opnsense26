@@ -103,18 +103,18 @@ func (r *KeaSubnetResource) Schema(ctx context.Context, req resource.SchemaReque
 }
 
 func (r *KeaSubnetResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	// Prevent panic if the provider has not been configured.
 	if req.ProviderData == nil {
 		return
-	if !data.Option.IsNull() {
-		optionData := parseOptionData(data.Option.ValueString())
-		if len(optionData) > 0 {
-			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
-		}
 	}
+
+	// Type assert the provider data to the expected Client type
+	client, ok := req.ProviderData.(*Client)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *Client, got: %T.", req.ProviderData),
+			fmt.Sprintf("Expected *Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
@@ -137,6 +137,12 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 
 	if !data.Pools.IsNull() {
 		subnetData["subnet4"].(map[string]interface{})["pools"] = data.Pools.ValueString()
+	}
+	if !data.Option.IsNull() {
+		optionData := parseOptionData(data.Option.ValueString())
+		if len(optionData) > 0 {
+			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
+		}
 	}
 	if !data.Description.IsNull() {
 		subnetData["subnet4"].(map[string]interface{})["description"] = data.Description.ValueString()
