@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 var _ resource.Resource = &KeaSubnetResource{}
@@ -36,7 +36,7 @@ func parseOptionData(optionStr string) map[string]interface{} {
 		// OPNsense internal names use underscores
 		optionKey := strings.ReplaceAll(name, "-", "_")
 
-		// FIXED: Directly map to value/selected to avoid 500 errors
+		// Mapping to OPNsense standard nested format
 		optionData[optionKey] = map[string]interface{}{
 			"value":    dataVal,
 			"selected": 1,
@@ -76,9 +76,8 @@ func (r *KeaSubnetResource) Schema(ctx context.Context, req resource.SchemaReque
 			"pools":       schema.StringAttribute{Optional: true},
 			"option_data": schema.StringAttribute{Optional: true},
 			"auto_collect": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				MarkdownDescription: "Disable to use manual DHCP options",
+				Optional: true,
+				Computed: true,
 			},
 			"description": schema.StringAttribute{Optional: true},
 		},
@@ -104,11 +103,11 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	subnetPayload := r.mapToPayload(&data)
-	jsonData, _ := json.Marshal(subnetPayload)
+	payload := r.mapToPayload(&data)
+	jsonData, _ := json.Marshal(payload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
-	body := r.doRequest(ctx, "POST", url, jsonData, resp)
+	body := r.doRequest(ctx, "POST", url, jsonData, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -134,8 +133,8 @@ func (r *KeaSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/get_subnet/%s", r.client.Host, data.ID.ValueString())
-	body := r.doRequest(ctx, "GET", url, nil, resp)
-	if resp.Diagnostics.HasError() {
+	body := r.doRequest(ctx, "GET", url, nil, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() || body == nil {
 		return
 	}
 
@@ -159,11 +158,11 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	subnetPayload := r.mapToPayload(&data)
-	jsonData, _ := json.Marshal(subnetPayload)
+	payload := r.mapToPayload(&data)
+	jsonData, _ := json.Marshal(payload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/set_subnet/%s", r.client.Host, data.ID.ValueString())
-	r.doRequest(ctx, "POST", url, jsonData, resp)
+	r.doRequest(ctx, "POST", url, jsonData, &resp.Diagnostics)
 	
 	r.reconfigureService(ctx)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -174,7 +173,7 @@ func (r *KeaSubnetResource) Delete(ctx context.Context, req resource.DeleteReque
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/del_subnet/%s", r.client.Host, data.ID.ValueString())
-	r.doRequest(ctx, "POST", url, nil, resp)
+	r.doRequest(ctx, "POST", url, nil, &resp.Diagnostics)
 	r.reconfigureService(ctx)
 }
 
@@ -204,8 +203,8 @@ func (r *KeaSubnetResource) mapToPayload(data *KeaSubnetResourceModel) map[strin
 	return map[string]interface{}{"subnet4": subnet4}
 }
 
-// Internal Helper: Execute HTTP Request
-func (r *KeaSubnetResource) doRequest(ctx context.Context, method, url string, body []byte, resp *resource.CreateResponse) []byte {
+// Internal Helper: Execute HTTP Request using generic diagnostics
+func (r *KeaSubnetResource) doRequest(ctx context.Context, method, url string, body []byte, diags *diag.Diagnostics) []byte {
 	var reader io.Reader
 	if body != nil {
 		reader = strings.NewReader(string(body))
@@ -217,20 +216,19 @@ func (r *KeaSubnetResource) doRequest(ctx context.Context, method, url string, b
 
 	httpResp, err := r.client.client.Do(req)
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", err.Error())
+		diags.AddError("Client Error", err.Error())
 		return nil
 	}
 	defer httpResp.Body.Close()
 
 	respBody, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Status %d: %s", httpResp.StatusCode, string(respBody)))
+		diags.AddError("API Error", fmt.Sprintf("Status %d: %s", httpResp.StatusCode, string(respBody)))
 		return nil
 	}
 	return respBody
 }
 
-// Internal Helper: Reconfigure Service
 func (r *KeaSubnetResource) reconfigureService(ctx context.Context) {
 	url := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
