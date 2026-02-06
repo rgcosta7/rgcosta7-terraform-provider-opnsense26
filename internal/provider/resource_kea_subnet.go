@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 var _ resource.Resource = &KeaSubnetResource{}
@@ -79,7 +80,16 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 	if resp.Diagnostics.HasError() { return }
 
 	payload := r.mapToPayload(ctx, &data)
-	jsonData, _ := json.Marshal(payload)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		resp.Diagnostics.AddError("JSON Marshal Error", fmt.Sprintf("Failed to marshal payload: %s", err))
+		return
+	}
+	
+	// Log the JSON being sent
+	tflog.Debug(ctx, "Creating Kea subnet", map[string]any{
+		"json": string(jsonData),
+	})
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
 	body := r.doRequest(ctx, "POST", url, jsonData, &resp.Diagnostics)
@@ -160,22 +170,22 @@ func (r *KeaSubnetResource) mapToPayload(ctx context.Context, data *KeaSubnetRes
 		subnet4["option_data_autocollect"] = "1"
 	}
 
-	// Handle the options map
+	// Handle the options map - per XML model, option_data fields are direct strings
+	// Fields marked with <AsList>Y</AsList> accept comma-separated values
 	if !data.Option.IsNull() && !data.Option.IsUnknown() {
 		var optionMap map[string]string
 		data.Option.ElementsAs(ctx, &optionMap, false)
 		
-		formattedOptions := make(map[string]interface{})
+		optionData := make(map[string]interface{})
 		for k, v := range optionMap {
+			// Convert hyphenated names to underscores
 			key := strings.ReplaceAll(k, "-", "_")
-			formattedOptions[key] = map[string]interface{}{
-				"": map[string]interface{}{
-					"value":    v,
-					"selected": 1,
-				},
-			}
+			// Strip spaces after commas: "10.0.1.1, 10.0.1.2" -> "10.0.1.1,10.0.1.2"
+			cleanValue := strings.ReplaceAll(v, ", ", ",")
+			// Direct string value - no nesting, no value/selected wrapper
+			optionData[key] = cleanValue
 		}
-		subnet4["option_data"] = formattedOptions
+		subnet4["option_data"] = optionData
 	}
 
 	return map[string]interface{}{"subnet4": subnet4}
