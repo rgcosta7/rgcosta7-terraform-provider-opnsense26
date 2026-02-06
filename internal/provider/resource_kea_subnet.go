@@ -24,6 +24,36 @@ func NewKeaSubnetResource() resource.Resource {
 	return &KeaSubnetResource{}
 }
 
+// Helper function to parse option_data JSON array into OPNsense format
+func parseOptionData(optionStr string) map[string]interface{} {
+	var options []map[string]interface{}
+	
+	if err := json.Unmarshal([]byte(optionStr), &options); err != nil {
+		return nil
+	}
+	
+	optionData := make(map[string]interface{})
+	
+	for _, opt := range options {
+		if name, ok := opt["name"].(string); ok {
+			if dataVal, ok := opt["data"].(string); ok {
+				// Convert hyphenated names to underscores: domain-name-servers -> domain_name_servers
+				optionKey := strings.ReplaceAll(name, "-", "_")
+				
+				// OPNsense expects: {"": {"value": "data", "selected": 1}}
+				optionData[optionKey] = map[string]interface{}{
+					"": map[string]interface{}{
+						"value":    dataVal,
+						"selected": 1,
+					},
+				}
+			}
+		}
+	}
+	
+	return optionData
+}
+
 type KeaSubnetResource struct {
 	client *Client
 }
@@ -75,9 +105,12 @@ func (r *KeaSubnetResource) Schema(ctx context.Context, req resource.SchemaReque
 func (r *KeaSubnetResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
+	if !data.Option.IsNull() {
+		optionData := parseOptionData(data.Option.ValueString())
+		if len(optionData) > 0 {
+			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
+		}
 	}
-
-	client, ok := req.ProviderData.(*Client)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
@@ -98,15 +131,12 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 
 	subnetData := map[string]interface{}{
 		"subnet4": map[string]interface{}{
-			"subnet4": data.Subnet.ValueString(),
+			"subnet": data.Subnet.ValueString(),
 		},
 	}
 
 	if !data.Pools.IsNull() {
 		subnetData["subnet4"].(map[string]interface{})["pools"] = data.Pools.ValueString()
-	}
-	if !data.Option.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["option_data"] = data.Option.ValueString()
 	}
 	if !data.Description.IsNull() {
 		subnetData["subnet4"].(map[string]interface{})["description"] = data.Description.ValueString()
@@ -359,7 +389,7 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 
 	subnetData := map[string]interface{}{
 		"subnet4": map[string]interface{}{
-			"subnet4": data.Subnet.ValueString(),
+			"subnet": data.Subnet.ValueString(),
 		},
 	}
 
@@ -367,7 +397,10 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 		subnetData["subnet4"].(map[string]interface{})["pools"] = data.Pools.ValueString()
 	}
 	if !data.Option.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["option_data"] = data.Option.ValueString()
+		optionData := parseOptionData(data.Option.ValueString())
+		if len(optionData) > 0 {
+			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
+		}
 	}
 	if !data.Description.IsNull() {
 		subnetData["subnet4"].(map[string]interface{})["description"] = data.Description.ValueString()
