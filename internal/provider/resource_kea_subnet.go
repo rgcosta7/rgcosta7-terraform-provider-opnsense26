@@ -24,33 +24,24 @@ func NewKeaSubnetResource() resource.Resource {
 	return &KeaSubnetResource{}
 }
 
-// Helper function to parse option_data JSON array into OPNsense format
+// Helper function to parse simple Map into OPNsense format
 func parseOptionData(optionStr string) map[string]interface{} {
-	var options []map[string]interface{}
-	
+	var options map[string]string
 	if err := json.Unmarshal([]byte(optionStr), &options); err != nil {
 		return nil
 	}
-	
+
 	optionData := make(map[string]interface{})
-	
-	for _, opt := range options {
-		if name, ok := opt["name"].(string); ok {
-			if dataVal, ok := opt["data"].(string); ok {
-				// Convert hyphenated names to underscores: domain-name-servers -> domain_name_servers
-				optionKey := strings.ReplaceAll(name, "-", "_")
-				
-				// OPNsense expects: {"": {"value": "data", "selected": 1}}
-				optionData[optionKey] = map[string]interface{}{
-					"": map[string]interface{}{
-						"value":    dataVal,
-						"selected": 1,
-					},
-				}
-			}
+	for name, dataVal := range options {
+		// OPNsense internal names use underscores
+		optionKey := strings.ReplaceAll(name, "-", "_")
+
+		// FIXED: Directly map to value/selected to avoid 500 errors
+		optionData[optionKey] = map[string]interface{}{
+			"value":    dataVal,
+			"selected": 1,
 		}
 	}
-	
 	return optionData
 }
 
@@ -63,6 +54,7 @@ type KeaSubnetResourceModel struct {
 	Subnet      types.String `tfsdk:"subnet"`
 	Pools       types.String `tfsdk:"pools"`
 	Option      types.String `tfsdk:"option_data"`
+	AutoCollect types.Bool   `tfsdk:"auto_collect"`
 	Description types.String `tfsdk:"description"`
 }
 
@@ -73,52 +65,35 @@ func (r *KeaSubnetResource) Metadata(ctx context.Context, req resource.MetadataR
 func (r *KeaSubnetResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages Kea DHCP subnets in OPNsense",
-
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Subnet UUID",
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"subnet": schema.StringAttribute{
-				MarkdownDescription: "Subnet in CIDR notation (e.g., 192.168.1.0/24)",
-				Required:            true,
-			},
-			"pools": schema.StringAttribute{
-				MarkdownDescription: "IP address pools (comma-separated ranges, e.g., '192.168.1.100-192.168.1.200')",
+			"subnet":      schema.StringAttribute{Required: true},
+			"pools":       schema.StringAttribute{Optional: true},
+			"option_data": schema.StringAttribute{Optional: true},
+			"auto_collect": schema.BoolAttribute{
 				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Disable to use manual DHCP options",
 			},
-			"option_data": schema.StringAttribute{
-				MarkdownDescription: "DHCP options data",
-				Optional:            true,
-			},
-			"description": schema.StringAttribute{
-				MarkdownDescription: "Description of the subnet",
-				Optional:            true,
-			},
+			"description": schema.StringAttribute{Optional: true},
 		},
 	}
 }
 
 func (r *KeaSubnetResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	// Prevent panic if the provider has not been configured.
 	if req.ProviderData == nil {
 		return
 	}
-
-	// Type assert the provider data to the expected Client type
 	client, ok := req.ProviderData.(*Client)
-
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
+		resp.Diagnostics.AddError("Type Error", "Expected *Client")
 		return
 	}
-
 	r.client = client
 }
 
@@ -129,176 +104,25 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	subnetData := map[string]interface{}{
-		"subnet4": map[string]interface{}{
-			"subnet": data.Subnet.ValueString(),
-		},
-	}
-
-	if !data.Pools.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["pools"] = data.Pools.ValueString()
-	}
-	if !data.Option.IsNull() {
-		optionData := parseOptionData(data.Option.ValueString())
-		if len(optionData) > 0 {
-			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
-		}
-	}
-	if !data.Description.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["description"] = data.Description.ValueString()
-	}
-
-	jsonData, _ := json.Marshal(subnetData)
-
-	// Log the request for debugging
-	tflog.Debug(ctx, "Creating Kea subnet", map[string]any{
-		"endpoint": "/api/kea/dhcpv4/add_subnet",
-		"request":  string(jsonData),
-	})
+	subnetPayload := r.mapToPayload(&data)
+	jsonData, _ := json.Marshal(subnetPayload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
-	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := r.client.client.Do(httpReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create subnet: %s", err))
-		return
-	}
-	defer httpResp.Body.Close()
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
-		return
-	}
-
-	// Log raw response
-	tflog.Debug(ctx, "Kea API Response", map[string]any{
-		"status_code": httpResp.StatusCode,
-		"body":        string(body),
-	})
-
-	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
-		return
-	}
-
-	// Check if response is empty or just whitespace
-	if len(strings.TrimSpace(string(body))) == 0 {
-		resp.Diagnostics.AddError("API Error", "API returned empty response")
-		return
-	}
-
-	// Try to determine what kind of response we got
-	firstChar := strings.TrimSpace(string(body))[0]
-	
-	if firstChar == '[' {
-		// It's an array response - likely validation errors or empty response
-		var resultArray []interface{}
-		if err := json.Unmarshal(body, &resultArray); err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse array response: %s\nRaw response: %s", err, string(body)))
-			return
-		}
-		
-		if len(resultArray) == 0 {
-			resp.Diagnostics.AddError(
-				"Kea DHCP API Error",
-				"API returned empty array [].\n\n"+
-				"This typically means:\n"+
-				"1. The Kea DHCP plugin is not installed or enabled in OPNsense\n"+
-				"2. The API endpoint doesn't exist (wrong OPNsense version)\n"+
-				"3. Request validation failed\n\n"+
-				"To fix:\n"+
-				"- In OPNsense GUI: System > Firmware > Plugins\n"+
-				"- Install 'os-kea-dhcp' plugin if not already installed\n"+
-				"- Check Services > Kea DHCPv4 to ensure it's configured\n\n"+
-				"Request sent: "+string(jsonData),
-			)
-			return
-		}
-		
-		// Try to extract error messages from array
-		var errorMessages []string
-		for _, item := range resultArray {
-			if errMap, ok := item.(map[string]interface{}); ok {
-				if msg, ok := errMap["message"].(string); ok {
-					errorMessages = append(errorMessages, msg)
-				}
-			}
-		}
-		
-		if len(errorMessages) > 0 {
-			resp.Diagnostics.AddError("API Validation Error", fmt.Sprintf("API returned errors: %s", strings.Join(errorMessages, ", ")))
-		} else {
-			resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned unexpected array response: %s", string(body)))
-		}
+	body := r.doRequest(ctx, "POST", url, jsonData, resp)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
-		return
-	}
+	json.Unmarshal(body, &result)
 
-	// Check for validation errors in result
-	if resultStatus, ok := result["result"].(string); ok && resultStatus == "failed" {
-		var errorMsgs []string
-		if validations, ok := result["validations"].(map[string]interface{}); ok {
-			for field, errors := range validations {
-				if errList, ok := errors.([]interface{}); ok {
-					for _, err := range errList {
-						if errStr, ok := err.(string); ok {
-							errorMsgs = append(errorMsgs, fmt.Sprintf("%s: %s", field, errStr))
-						}
-					}
-				} else if errStr, ok := errors.(string); ok {
-					errorMsgs = append(errorMsgs, fmt.Sprintf("%s: %s", field, errStr))
-				}
-			}
-		}
-		if len(errorMsgs) > 0 {
-			resp.Diagnostics.AddError("API Validation Failed", fmt.Sprintf("Validation errors:\n- %s", strings.Join(errorMsgs, "\n- ")))
-		} else {
-			resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned failed status: %s", string(body)))
-		}
-		return
-	}
-
-	// Log the full response for debugging
-	if resultJSON, err := json.MarshalIndent(result, "", "  "); err == nil {
-		tflog.Debug(ctx, "API Response", map[string]any{"response": string(resultJSON)})
-	}
-
-	// Try to extract UUID from various possible response formats
-	var uuid string
-	if uuidVal, ok := result["uuid"].(string); ok {
-		uuid = uuidVal
-	} else if uuidVal, ok := result["id"].(string); ok {
-		uuid = uuidVal
-	} else if resultVal, ok := result["result"].(string); ok {
-		uuid = resultVal
-	} else if subnetData, ok := result["subnet4"].(map[string]interface{}); ok {
-		if uuidVal, ok := subnetData["uuid"].(string); ok {
-			uuid = uuidVal
-		}
-	}
-
-	if uuid != "" {
+	if uuid, ok := result["uuid"].(string); ok {
 		data.ID = types.StringValue(uuid)
-	} else {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("No UUID found in API response. Response: %s", string(body)))
-		return
+	} else if res, ok := result["result"].(string); ok && res != "failed" {
+		data.ID = types.StringValue(res)
 	}
 
-	// Apply configuration
-	applyURL := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
-	applyReq, _ := http.NewRequestWithContext(ctx, "POST", applyURL, nil)
-	applyReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-	r.client.client.Do(applyReq)
-
+	r.reconfigureService(ctx)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -310,77 +134,19 @@ func (r *KeaSubnetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/get_subnet/%s", r.client.Host, data.ID.ValueString())
-	httpReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-
-	httpResp, err := r.client.client.Do(httpReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read subnet: %s", err))
-		return
-	}
-	defer httpResp.Body.Close()
-
-	if httpResp.StatusCode == 404 {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d", httpResp.StatusCode))
-		return
-	}
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
-		return
-	}
-
-	// Log raw response
-	tflog.Debug(ctx, "Kea subnet Read response", map[string]any{
-		"status_code": httpResp.StatusCode,
-		"body":        string(body),
-	})
-
-	// Check if response is empty
-	if len(strings.TrimSpace(string(body))) == 0 {
-		// Empty response might mean the subnet doesn't exist anymore
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
-	// Try to determine what kind of response we got
-	firstChar := strings.TrimSpace(string(body))[0]
-	
-	if firstChar == '[' {
-		// Array response - likely means resource doesn't exist or error
-		tflog.Warn(ctx, "Kea subnet returned array, removing from state", map[string]any{
-			"id": data.ID.ValueString(),
-		})
-		resp.State.RemoveResource(ctx)
+	body := r.doRequest(ctx, "GET", url, nil, resp)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
-		return
-	}
+	json.Unmarshal(body, &result)
 
-	// Parse the subnet data from the response
 	if subnetData, ok := result["subnet4"].(map[string]interface{}); ok {
-		if subnet, ok := subnetData["subnet"].(string); ok {
-			data.Subnet = types.StringValue(subnet)
-		}
-		if pools, ok := subnetData["pools"].(string); ok {
-			data.Pools = types.StringValue(pools)
-		}
-		if optionData, ok := subnetData["option_data"].(string); ok {
-			data.Option = types.StringValue(optionData)
-		}
-		if description, ok := subnetData["description"].(string); ok {
-			data.Description = types.StringValue(description)
-		}
+		data.Subnet = types.StringValue(subnetData["subnet"].(string))
+		data.Pools = types.StringValue(subnetData["pools"].(string))
+		data.Description = types.StringValue(subnetData["description"].(string))
+		data.AutoCollect = types.BoolValue(subnetData["option_data_autocollect"].(string) == "1")
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -393,84 +159,81 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	subnetData := map[string]interface{}{
-		"subnet4": map[string]interface{}{
-			"subnet": data.Subnet.ValueString(),
-		},
-	}
-
-	if !data.Pools.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["pools"] = data.Pools.ValueString()
-	}
-	if !data.Option.IsNull() {
-		optionData := parseOptionData(data.Option.ValueString())
-		if len(optionData) > 0 {
-			subnetData["subnet4"].(map[string]interface{})["option_data"] = optionData
-		}
-	}
-	if !data.Description.IsNull() {
-		subnetData["subnet4"].(map[string]interface{})["description"] = data.Description.ValueString()
-	}
-
-	jsonData, _ := json.Marshal(subnetData)
+	subnetPayload := r.mapToPayload(&data)
+	jsonData, _ := json.Marshal(subnetPayload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/set_subnet/%s", r.client.Host, data.ID.ValueString())
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
-	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := r.client.client.Do(httpReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update subnet: %s", err))
-		return
-	}
-	defer httpResp.Body.Close()
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read response: %s", err))
-		return
-	}
-
-	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
-		return
-	}
-
-	// Apply configuration
-	applyURL := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
-	applyReq, _ := http.NewRequestWithContext(ctx, "POST", applyURL, nil)
-	applyReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-	r.client.client.Do(applyReq)
-
+	r.doRequest(ctx, "POST", url, jsonData, resp)
+	
+	r.reconfigureService(ctx)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *KeaSubnetResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data KeaSubnetResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/del_subnet/%s", r.client.Host, data.ID.ValueString())
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
-	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-
-	httpResp, err := r.client.client.Do(httpReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete subnet: %s", err))
-		return
-	}
-	defer httpResp.Body.Close()
-
-	// Apply configuration
-	applyURL := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
-	applyReq, _ := http.NewRequestWithContext(ctx, "POST", applyURL, nil)
-	applyReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
-	r.client.client.Do(applyReq)
+	r.doRequest(ctx, "POST", url, nil, resp)
+	r.reconfigureService(ctx)
 }
 
 func (r *KeaSubnetResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// Internal Helper: Map model to API payload
+func (r *KeaSubnetResource) mapToPayload(data *KeaSubnetResourceModel) map[string]interface{} {
+	subnet4 := map[string]interface{}{
+		"subnet": data.Subnet.ValueString(),
+	}
+
+	if !data.Pools.IsNull() { subnet4["pools"] = data.Pools.ValueString() }
+	if !data.Description.IsNull() { subnet4["description"] = data.Description.ValueString() }
+	
+	if !data.AutoCollect.IsNull() && !data.AutoCollect.ValueBool() {
+		subnet4["option_data_autocollect"] = "0"
+	} else {
+		subnet4["option_data_autocollect"] = "1"
+	}
+
+	if !data.Option.IsNull() {
+		subnet4["option_data"] = parseOptionData(data.Option.ValueString())
+	}
+
+	return map[string]interface{}{"subnet4": subnet4}
+}
+
+// Internal Helper: Execute HTTP Request
+func (r *KeaSubnetResource) doRequest(ctx context.Context, method, url string, body []byte, resp *resource.CreateResponse) []byte {
+	var reader io.Reader
+	if body != nil {
+		reader = strings.NewReader(string(body))
+	}
+
+	req, _ := http.NewRequestWithContext(ctx, method, url, reader)
+	req.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := r.client.client.Do(req)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", err.Error())
+		return nil
+	}
+	defer httpResp.Body.Close()
+
+	respBody, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode != 200 {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Status %d: %s", httpResp.StatusCode, string(respBody)))
+		return nil
+	}
+	return respBody
+}
+
+// Internal Helper: Reconfigure Service
+func (r *KeaSubnetResource) reconfigureService(ctx context.Context) {
+	url := fmt.Sprintf("%s/api/kea/service/reconfigure", r.client.Host)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
+	req.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
+	r.client.client.Do(req)
 }
