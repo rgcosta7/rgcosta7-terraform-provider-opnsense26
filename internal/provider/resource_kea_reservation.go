@@ -268,9 +268,34 @@ func (r *KeaReservationResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
+	// Log raw response
+	tflog.Debug(ctx, "Kea reservation Read response", map[string]any{
+		"status_code": httpResp.StatusCode,
+		"body":        string(body),
+	})
+
+	// Check if response is empty
+	if len(strings.TrimSpace(string(body))) == 0 {
+		// Empty response might mean the reservation doesn't exist anymore
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	// Try to determine what kind of response we got
+	firstChar := strings.TrimSpace(string(body))[0]
+	
+	if firstChar == '[' {
+		// Array response - likely means resource doesn't exist or error
+		tflog.Warn(ctx, "Kea reservation returned array, removing from state", map[string]any{
+			"id": data.ID.ValueString(),
+		})
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
 		return
 	}
 
