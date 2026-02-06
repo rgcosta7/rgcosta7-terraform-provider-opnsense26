@@ -32,24 +32,22 @@ type FirewallRuleResource struct {
 
 // FirewallRuleResourceModel describes the resource data model.
 type FirewallRuleResourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Description     types.String `tfsdk:"description"`
-	Interface       types.String `tfsdk:"interface"`
-	Direction       types.String `tfsdk:"direction"`
-	IPProtocol      types.String `tfsdk:"ip_protocol"`
-	Protocol        types.String `tfsdk:"protocol"`
-	SourceNet       types.String `tfsdk:"source_net"`
-	SourcePort      types.String `tfsdk:"source_port"`
-	SourceNot       types.Bool   `tfsdk:"source_not"`
-	DestNet         types.String `tfsdk:"destination_net"`
-	DestPort        types.String `tfsdk:"destination_port"`
-	DestNot         types.Bool   `tfsdk:"destination_not"`
-	Action          types.String `tfsdk:"action"`
-	Enabled         types.Bool   `tfsdk:"enabled"`
-	Log             types.Bool   `tfsdk:"log"`
-	Quick           types.Bool   `tfsdk:"quick"`
-	Invert		    types.Bool   `tfsdk:"invert"`
-	Categories      types.List   `tfsdk:"categories"`
+	ID          types.String `tfsdk:"id"`
+	Description types.String `tfsdk:"description"`
+	Interface   types.String `tfsdk:"interface"`
+	Direction   types.String `tfsdk:"direction"`
+	IPProtocol  types.String `tfsdk:"ip_protocol"`
+	Protocol    types.String `tfsdk:"protocol"`
+	SourceNet   types.String `tfsdk:"source_net"`
+	SourcePort  types.String `tfsdk:"source_port"`
+	DestNet     types.String `tfsdk:"destination_net"`
+	DestPort    types.String `tfsdk:"destination_port"`
+	Action      types.String `tfsdk:"action"`
+	Enabled     types.Bool   `tfsdk:"enabled"`
+	Log         types.Bool   `tfsdk:"log"`
+	Quick       types.Bool   `tfsdk:"quick"`
+	Invert      types.Bool   `tfsdk:"invert"`
+	Categories  types.List   `tfsdk:"categories"`
 }
 
 func (r *FirewallRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -96,20 +94,12 @@ func (r *FirewallRuleResource) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "Source port or port range",
 				Optional:            true,
 			},
-			"source_not": schema.BoolAttribute{
-				MarkdownDescription: "Invert source match (NOT source_net)",
-				Optional:            true,
-			},
 			"destination_net": schema.StringAttribute{
 				MarkdownDescription: "Destination network or IP address",
 				Required:            true,
 			},
 			"destination_port": schema.StringAttribute{
 				MarkdownDescription: "Destination port or port range",
-				Optional:            true,
-			},
-			"destination_not": schema.BoolAttribute{
-				MarkdownDescription: "Invert destination match (NOT destination_net)",
 				Optional:            true,
 			},
 			"action": schema.StringAttribute{
@@ -131,7 +121,7 @@ func (r *FirewallRuleResource) Schema(ctx context.Context, req resource.SchemaRe
 			"invert": schema.BoolAttribute{
 				MarkdownDescription: "Invert the rule match (NOT operation)",
 				Optional:            true,
-			},			
+			},
 			"categories": schema.ListAttribute{
 				MarkdownDescription: "List of category UUIDs for organizing rules",
 				Optional:            true,
@@ -233,7 +223,7 @@ func (r *FirewallRuleResource) Create(ctx context.Context, req resource.CreateRe
 		} else {
 			ruleData["rule"].(map[string]interface{})["invert"] = "0"
 		}
-	}	
+	}
 	if !data.Categories.IsNull() {
 		var categories []string
 		resp.Diagnostics.Append(data.Categories.ElementsAs(ctx, &categories, false)...)
@@ -282,14 +272,33 @@ func (r *FirewallRuleResource) Create(ctx context.Context, req resource.CreateRe
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s", err))
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse response: %s\nRaw response: %s", err, string(body)))
 		return
 	}
 
-	if uuid, ok := result["uuid"].(string); ok {
+	// Log the full response for debugging
+	if resultJSON, err := json.MarshalIndent(result, "", "  "); err == nil {
+		resp.Diagnostics.AddWarning("API Response", fmt.Sprintf("Full response: %s", string(resultJSON)))
+	}
+
+	// Try to extract UUID from various possible response formats
+	var uuid string
+	if uuidVal, ok := result["uuid"].(string); ok {
+		uuid = uuidVal
+	} else if uuidVal, ok := result["id"].(string); ok {
+		uuid = uuidVal
+	} else if resultVal, ok := result["result"].(string); ok {
+		uuid = resultVal
+	} else if ruleData, ok := result["rule"].(map[string]interface{}); ok {
+		if uuidVal, ok := ruleData["uuid"].(string); ok {
+			uuid = uuidVal
+		}
+	}
+
+	if uuid != "" {
 		data.ID = types.StringValue(uuid)
 	} else {
-		resp.Diagnostics.AddError("API Error", "No UUID returned from API")
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("No UUID found in API response. Full response: %s", string(body)))
 		return
 	}
 
@@ -408,7 +417,7 @@ func (r *FirewallRuleResource) Update(ctx context.Context, req resource.UpdateRe
 		} else {
 			ruleData["rule"].(map[string]interface{})["invert"] = "0"
 		}
-	}	
+	}
 	if !data.Categories.IsNull() {
 		var categories []string
 		resp.Diagnostics.Append(data.Categories.ElementsAs(ctx, &categories, false)...)
