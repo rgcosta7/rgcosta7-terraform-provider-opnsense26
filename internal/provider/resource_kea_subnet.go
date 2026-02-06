@@ -25,18 +25,10 @@ func NewKeaSubnetResource() resource.Resource {
 }
 
 // Helper function to parse simple Map into OPNsense format
-func parseOptionData(optionStr string) map[string]interface{} {
-	var options map[string]string
-	if err := json.Unmarshal([]byte(optionStr), &options); err != nil {
-		return nil
-	}
-
+func parseOptionData(ctx context.Context, optionMap map[string]string) map[string]interface{} {
 	optionData := make(map[string]interface{})
-	for name, dataVal := range options {
-		// OPNsense internal names use underscores
+	for name, dataVal := range optionMap {
 		optionKey := strings.ReplaceAll(name, "-", "_")
-
-		// Mapping to OPNsense standard nested format
 		optionData[optionKey] = map[string]interface{}{
 			"value":    dataVal,
 			"selected": 1,
@@ -53,8 +45,8 @@ type KeaSubnetResourceModel struct {
 	ID          types.String `tfsdk:"id"`
 	Subnet      types.String `tfsdk:"subnet"`
 	Pools       types.String `tfsdk:"pools"`
-	Option      types.String `tfsdk:"option_data"`
-	AutoCollect types.Bool   `tfsdk:"auto_collect"`
+	Option      types.Map    `tfsdk:"option_data"`
+	AutoCollect types.Bool   `tfsdk:"auto_collect"`	
 	Description types.String `tfsdk:"description"`
 }
 
@@ -74,10 +66,10 @@ func (r *KeaSubnetResource) Schema(ctx context.Context, req resource.SchemaReque
 			},
 			"subnet":      schema.StringAttribute{Required: true},
 			"pools":       schema.StringAttribute{Optional: true},
-			"option_data": schema.StringAttribute{Optional: true},
-			"auto_collect": schema.BoolAttribute{
-				Optional: true,
-				Computed: true,
+			"option_data": schema.MapAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				MarkdownDescription: "DHCP options data as a map (e.g. { routers = '10.0.0.1' })",
 			},
 			"description": schema.StringAttribute{Optional: true},
 		},
@@ -103,7 +95,7 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	payload := r.mapToPayload(&data)
+	payload := r.mapToPayload(ctx, &data)
 	jsonData, _ := json.Marshal(payload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
@@ -158,7 +150,7 @@ func (r *KeaSubnetResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	payload := r.mapToPayload(&data)
+	payload := r.mapToPayload(ctx, &data)
 	jsonData, _ := json.Marshal(payload)
 
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/set_subnet/%s", r.client.Host, data.ID.ValueString())
@@ -182,7 +174,7 @@ func (r *KeaSubnetResource) ImportState(ctx context.Context, req resource.Import
 }
 
 // Internal Helper: Map model to API payload
-func (r *KeaSubnetResource) mapToPayload(data *KeaSubnetResourceModel) map[string]interface{} {
+func (r *KeaSubnetResource) mapToPayload(ctx context.Context, data *KeaSubnetResourceModel) map[string]interface{} {
 	subnet4 := map[string]interface{}{
 		"subnet": data.Subnet.ValueString(),
 	}
@@ -196,8 +188,12 @@ func (r *KeaSubnetResource) mapToPayload(data *KeaSubnetResourceModel) map[strin
 		subnet4["option_data_autocollect"] = "1"
 	}
 
-	if !data.Option.IsNull() {
-		subnet4["option_data"] = parseOptionData(data.Option.ValueString())
+	if !data.Option.IsNull() && !data.Option.IsUnknown() {
+		var optionMap map[string]string
+		diags := data.Option.ElementsAs(ctx, &optionMap, false)
+		if !diags.HasError() {
+			subnet4["option_data"] = parseOptionData(ctx, optionMap)
+		}
 	}
 
 	return map[string]interface{}{"subnet4": subnet4}
