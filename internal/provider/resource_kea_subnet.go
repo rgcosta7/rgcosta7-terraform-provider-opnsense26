@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 var _ resource.Resource = &KeaSubnetResource{}
@@ -113,6 +114,12 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 
 	jsonData, _ := json.Marshal(subnetData)
 
+	// Log the request for debugging
+	tflog.Debug(ctx, "Creating Kea subnet", map[string]any{
+		"endpoint": "/api/kea/dhcpv4/add_subnet",
+		"request":  string(jsonData),
+	})
+
 	url := fmt.Sprintf("%s/api/kea/dhcpv4/add_subnet", r.client.Host)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
 	httpReq.SetBasicAuth(r.client.ApiKey, r.client.ApiSecret)
@@ -131,8 +138,54 @@ func (r *KeaSubnetResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	// Log raw response
+	tflog.Debug(ctx, "Kea API Response", map[string]any{
+		"status_code": httpResp.StatusCode,
+		"body":        string(body),
+	})
+
 	if httpResp.StatusCode != 200 {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(body)))
+		return
+	}
+
+	// Check if response is empty or just whitespace
+	if len(strings.TrimSpace(string(body))) == 0 {
+		resp.Diagnostics.AddError("API Error", "API returned empty response")
+		return
+	}
+
+	// Try to determine what kind of response we got
+	firstChar := strings.TrimSpace(string(body))[0]
+	
+	if firstChar == '[' {
+		// It's an array response - likely validation errors or empty response
+		var resultArray []interface{}
+		if err := json.Unmarshal(body, &resultArray); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse array response: %s\nRaw response: %s", err, string(body)))
+			return
+		}
+		
+		if len(resultArray) == 0 {
+			resp.Diagnostics.AddError("API Error", "API returned empty array - this usually means the request failed validation or the API endpoint doesn't exist")
+			return
+		}
+		
+		// Try to extract error messages from array
+		var errorMessages []string
+		for _, item := range resultArray {
+			if errMap, ok := item.(map[string]interface{}); ok {
+				if msg, ok := errMap["message"].(string); ok {
+					errorMessages = append(errorMessages, msg)
+				}
+			}
+		}
+		
+		if len(errorMessages) > 0 {
+			resp.Diagnostics.AddError("API Validation Error", fmt.Sprintf("API returned errors: %s", strings.Join(errorMessages, ", ")))
+		} else {
+			resp.Diagnostics.AddError("API Error", fmt.Sprintf("API returned unexpected array response: %s", string(body)))
+		}
 		return
 	}
 

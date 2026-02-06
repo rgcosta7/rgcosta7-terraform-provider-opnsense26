@@ -47,7 +47,10 @@ type FirewallRuleResourceModel struct {
 	Log         types.Bool   `tfsdk:"log"`
 	Quick       types.Bool   `tfsdk:"quick"`
 	Invert      types.Bool   `tfsdk:"invert"`
-	Categories  types.List   `tfsdk:"categories"`
+	// Deprecated fields for backward compatibility - kept to avoid state errors
+	SourceNot      types.Bool `tfsdk:"source_not"`
+	DestinationNot types.Bool `tfsdk:"destination_not"`
+	Categories     types.List `tfsdk:"categories"`
 }
 
 func (r *FirewallRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -121,6 +124,16 @@ func (r *FirewallRuleResource) Schema(ctx context.Context, req resource.SchemaRe
 			"invert": schema.BoolAttribute{
 				MarkdownDescription: "Invert the rule match (NOT operation)",
 				Optional:            true,
+			},
+			"source_not": schema.BoolAttribute{
+				MarkdownDescription: "DEPRECATED: Use 'invert' instead. Invert source match",
+				Optional:            true,
+				DeprecationMessage:  "This attribute is deprecated. Use 'invert' instead.",
+			},
+			"destination_not": schema.BoolAttribute{
+				MarkdownDescription: "DEPRECATED: Use 'invert' instead. Invert destination match",
+				Optional:            true,
+				DeprecationMessage:  "This attribute is deprecated. Use 'invert' instead.",
 			},
 			"categories": schema.ListAttribute{
 				MarkdownDescription: "List of category UUIDs for organizing rules",
